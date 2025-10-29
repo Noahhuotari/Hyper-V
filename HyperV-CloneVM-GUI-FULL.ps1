@@ -1,4 +1,24 @@
-﻿# --- Load .NET Assemblies ---
+<#	
+	.NOTES
+	===========================================================================
+	 Created on:   	10/29/2025
+  	 Updated on:	10/29/2025
+	 Created by:    Noah Huotari
+	 Organization: 	HBS
+	 Filename:     	HyperV-CloneVM-GUI-FULL.ps1
+	===========================================================================
+	.DESCRIPTION
+		GUI to deploy VMs in Hyper-V using a tempalte
+        The script can also customize the hardware, set a static IP, change the hostname, and join the domain
+#>
+
+<#
+	.ChangeLog
+ 	===========================================================================
+    2025-10-29 - Created script
+#>
+
+ # --- Load .NET Assemblies ---
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Net
