@@ -1,21 +1,22 @@
-<#	
-	.NOTES
-	===========================================================================
-	 Created on:   	10/29/2025
-  	 Updated on:	10/29/2025
-	 Created by:    Noah Huotari
-	 Organization: 	HBS
-	 Filename:     	HyperV-CloneVM-GUI-FULL.ps1
-	===========================================================================
-	.DESCRIPTION
-		GUI to deploy VMs in Hyper-V using a tempalte
+<#    
+    .NOTES
+    ===========================================================================
+     Created on:       10/29/2025
+       Updated on:    06/11/2026
+     Created by:    Noah Huotari
+     Organization:   HBS
+     Filename:         HyperV-CloneVM-GUI-FULL.ps1
+    ===========================================================================
+    .DESCRIPTION
+        GUI to deploy VMs in Hyper-V using a template
         The script can also customize the hardware, set a static IP, change the hostname, and join the domain
 #>
 
 <#
-	.ChangeLog
- 	===========================================================================
+    .ChangeLog
+    ===========================================================================
     2025-10-29 - Created script
+    2026-06-11 - Added Sysprep pre-flight check and dynamic offline VHDX unattend.xml injection
 #>
 
  # --- Load .NET Assemblies ---
@@ -102,6 +103,7 @@ $tabClone.Controls.Add($lblNewName)
 $txtNewName = New-Object System.Windows.Forms.TextBox
 $txtNewName.Location = New-Object System.Drawing.Point(160, 150)
 $txtNewName.Size = New-Object System.Drawing.Size(220, 20)
+$form.AcceptButton = $btnClone # Form executes default deployment block on Enter
 $tabClone.Controls.Add($txtNewName)
 
 # --- === 3. CREATE "POST-CLONE" TAB === ---
@@ -151,7 +153,7 @@ $grpHardware.Controls.Add($txtMemory)
 $grpGuestOS = New-Object System.Windows.Forms.GroupBox
 $grpGuestOS.Text = "Guest OS (Requires VM Start & Guest Services)"
 $grpGuestOS.Location = New-Object System.Drawing.Point(15, 80)
-$grpGuestOS.Size = New-Object System.Drawing.Size(380, 295) # Increased height
+$grpGuestOS.Size = New-Object System.Drawing.Size(380, 295) 
 $tabPostClone.Controls.Add($grpGuestOS)
 
 $chkGuestConfig = New-Object System.Windows.Forms.CheckBox
@@ -171,9 +173,7 @@ $grpGuestOS.Controls.Add($chkHostname)
 $grpIP = New-Object System.Windows.Forms.GroupBox
 $grpIP.Text = "Network"
 $grpIP.Location = New-Object System.Drawing.Point(15, 85)
-# --- *** FIX 1: INCREASED HEIGHT *** ---
-$grpIP.Size = New-Object System.Drawing.Size(350, 125) # Increased height
-# --- *** END FIX 1 *** ---
+$grpIP.Size = New-Object System.Drawing.Size(350, 125) 
 $grpGuestOS.Controls.Add($grpIP)
 
 $chkSetIP = New-Object System.Windows.Forms.CheckBox
@@ -197,9 +197,7 @@ $txtDNS2 = New-Object System.Windows.Forms.TextBox; $txtDNS2.Location = New-Obje
 # --- Domain Join Sub-Group ---
 $grpDomain = New-Object System.Windows.Forms.GroupBox
 $grpDomain.Text = "Active Directory"
-# --- *** FIX 2: ADJUSTED Y POSITION *** ---
-$grpDomain.Location = New-Object System.Drawing.Point(15, 220) # Adjusted Y position
-# --- *** END FIX 2 *** ---
+$grpDomain.Location = New-Object System.Drawing.Point(15, 220) 
 $grpDomain.Size = New-Object System.Drawing.Size(350, 60)
 $grpGuestOS.Controls.Add($grpDomain)
 
@@ -267,19 +265,14 @@ $form.Controls.Add($txtLog)
 function Add-Log {
     param (
         [string]$Message,
-        [string]$Color = "Black" # Used for prefix
+        [string]$Color = "Black" 
     )
 
     $prefix = ""
-    if ($Color -eq "Red") {
-        $prefix = "[ERROR] "
-    } elseif ($Color -eq "Yellow") {
-        $prefix = "[WARN] "
-    } elseif ($Color -eq "Cyan") {
-        $prefix = "[INFO] "
-    } elseif ($Color -eq "Green") {
-        $prefix = "[SUCCESS] "
-    }
+    if ($Color -eq "Red") { $prefix = "[ERROR] " } 
+    elseif ($Color -eq "Yellow") { $prefix = "[WARN] " } 
+    elseif ($Color -eq "Cyan") { $prefix = "[INFO] " } 
+    elseif ($Color -eq "Green") { $prefix = "[SUCCESS] " }
 
     $logEntry = "$(Get-Date -Format 'HH:mm:ss') $prefix$Message"
     $txtLog.AppendText("$logEntry`r`n")
@@ -338,11 +331,11 @@ $btnGetVMs.Add_Click({
     }
 })
 
-# --- === UPDATED CLONE BUTTON LOGIC === ---
+# --- === CLONE BUTTON MAIN CODE BLOCK === ---
 $btnClone.Add_Click({
     $ConfirmPreference = 'None'
 
-    # --- 1. Validate Input ---
+    # --- 1. Validate Form Input ---
     if ([string]::IsNullOrWhiteSpace($cboVMs.Text)) {
         [System.Windows.Forms.MessageBox]::Show("Please select a VM to clone.", "Missing Info", "OK", "Warning")
         $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return
@@ -350,6 +343,19 @@ $btnClone.Add_Click({
     if ([string]::IsNullOrWhiteSpace($txtNewName.Text)) {
         [System.Windows.Forms.MessageBox]::Show("Please enter a name for the new VM.", "Missing Info", "OK", "Warning")
         $form.DialogResult = [System.Windows.Forms.DialogResult]::None; return
+    }
+
+    # --- Pre-Flight Sysprep Checklist Confirmation ---
+    $sysprepMsg = "CRITICAL PRE-FLIGHT CHECK:`n`n" +
+                  "Has the source template VM ('$($cboVMs.Text)') been generalized via Sysprep?`n`n" +
+                  "If not, boot into the template OS and run:`n" +
+                  "C:\Windows\System32\Sysprep\Sysprep.exe /generalize /oobe /shutdown`n`n" +
+                  "Do you want to continue with the clone process?"
+    
+    $sysprepCheck = [System.Windows.Forms.MessageBox]::Show($sysprepMsg, "Verify Sysprep State", "YesNo", "Question", "Button2")
+    if ($sysprepCheck -eq "No") {
+        $form.DialogResult = [System.Windows.Forms.DialogResult]::None
+        return 
     }
 
     # --- 2. Set up Logging ---
@@ -373,14 +379,12 @@ $btnClone.Add_Click({
     $txtLog.Text = ""
 
     # --- 4. Get variables from form ---
-    # Tab 1
     $hostOrCluster = $txtHost.Text
     $cluster = $chkCluster.Checked
     $cloneSource = $cboVMs.Text
     $newVMName = $txtNewName.Text
     $isTestMode = $chkTestMode.Checked
 
-    # Tab 2
     $doHardwareConfig = $chkHardware.Checked
     $newCPU = $txtCPU.Text
     $newMemoryGB = $txtMemory.Text
@@ -392,7 +396,7 @@ $btnClone.Add_Click({
     $newSubnet = $txtSubnet.Text
     $newGateway = $txtGateway.Text
     $newDNS1 = $txtDNS.Text
-    $newDNS2 = $txtDNS2.Text # Added DNS2
+    $newDNS2 = $txtDNS2.Text 
 
     $doDomainJoin = $chkDomainJoin.Checked
     $newDomain = $txtDomain.Text
@@ -493,7 +497,7 @@ $btnClone.Add_Click({
         foreach($disk in $vmDisks) {
             $newDiskShortName = "$($newVMName)_$($disk.ControllerNumber)_$($disk.ControllerLocation).vhdx"
             $newNameFullPath = "$diskPath\$newDiskShortName"
-            Add-Log -Message "   Renaming disk $($disk.Path) to $newDiskShortName"
+            Add-Log -Message "    Renaming disk $($disk.Path) to $newDiskShortName"
             if (-not $isTestMode) {
                 $item = Rename-Item -Path $disk.Path -NewName "$newDiskShortName"
                 $disk | Set-VMHardDiskDrive -Path $newNameFullPath
@@ -520,8 +524,9 @@ $btnClone.Add_Click({
             $ModifySystemSettingsParameters['SystemSettings'] = $MSVMSystemSettings.GetText([System.Management.TextFormat]::CimDtd20)
             $wmiresult = $VMMS.InvokeMethod('ModifySystemSettings', $ModifySystemSettingsParameters, $null)
             if($wmiresult.ReturnValue -ne 0) { Add-Log -Message "!! Resetting UUID/Serial failed" -Color Red }
-            else { Add-Log -Message "   New BIOS GUID/Serial set." }
+            else { Add-Log -Message "    New BIOS GUID/Serial set." }
         } else {
+            $biosGuid = "[TEST BIOS GUID]" 
             Add-Log -Message "[TEST MODE] Would set New BIOS GUID: $biosGuid" -Color Yellow
             Add-Log -Message "[TEST MODE] Would set New Serial: $serial" -Color Yellow
         }
@@ -546,11 +551,11 @@ $btnClone.Add_Click({
             if (-not $isTestMode) {
                 if (-not $importedVM) { $importedVM = Get-VM $newVMName -ComputerName $hvHost }
 
-                Add-Log -Message "   Setting vCPU count to $newCPU"
+                Add-Log -Message "    Setting vCPU count to $newCPU"
                 Set-VMProcessor -VM $importedVM -Count ([int]$newCPU)
 
                 $startupMemoryBytes = [int64]$newMemoryGB * 1GB
-                Add-Log -Message "   Setting Startup Memory to ${newMemoryGB}GB"
+                Add-Log -Message "    Setting Startup Memory to ${newMemoryGB}GB"
                 Set-VMMemory -VM $importedVM -StartupBytes $startupMemoryBytes
             } else {
                 Add-Log -Message "[TEST MODE] Would set vCPU count to $newCPU" -Color Yellow
@@ -563,7 +568,7 @@ $btnClone.Add_Click({
             Add-Log -Message "--- PHASE 3: CONFIGURING GUEST OS (VM ON) ---" -Color Cyan
 
             if ($doSetIP) {
-                Add-Log -Message "   Validating network settings..."
+                Add-Log -Message "    Validating network settings..."
                 try {
                     $ipAddr = [System.Net.IPAddress]::Parse($newIP)
                     $subnetMask = [System.Net.IPAddress]::Parse($newSubnet)
@@ -585,7 +590,7 @@ $btnClone.Add_Click({
                     if (-not $gatewayOnNetwork -or $gatewayAddr.Equals($networkAddr) -or $gatewayAddr.Equals($broadcastAddr)) {
                          throw "Gateway address '$($gatewayAddr.IPAddressToString)' is not on the same network segment as IP '$($ipAddr.IPAddressToString)' with subnet '$($subnetMask.IPAddressToString)'."
                     }
-                    Add-Log -Message "   Network settings are valid." -Color Green
+                    Add-Log -Message "    Network settings are valid." -Color Green
                 } catch { throw "Invalid network configuration provided: $($_.Exception.Message)" }
             }
 
@@ -598,26 +603,100 @@ $btnClone.Add_Click({
                 if (-not $domainCred) { throw "Domain join credentials not provided. Aborting guest config." }
             }
 
+            # --- DYNAMIC OFFLINE UNATTEND INJECTION ---
+            Add-Log -Message "Generating dynamic unattend.xml using provided local credentials..." -Color Cyan
+            $plainPassword = $localAdminCred.GetNetworkCredential().Password
+            
+            $unattendXML = @"
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+    <settings pass="oobeSystem">
+        <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <OOBE>
+                <HideEULAPage>true</HideEULAPage>
+                <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+                <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+                <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+                <NetworkLocation>Work</NetworkLocation>
+                <ProtectYourPC>3</ProtectYourPC>
+            </OOBE>
+            <UserAccounts>
+                <AdministratorPassword>
+                    <Value>$plainPassword</Value>
+                    <PlainText>true</PlainText>
+                </AdministratorPassword>
+            </UserAccounts>
+        </component>
+        <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+            <InputLocale>en-US</InputLocale>
+            <SystemLocale>en-US</SystemLocale>
+            <UILanguage>en-US</UILanguage>
+            <UserLocale>en-US</UserLocale>
+        </component>
+    </settings>
+</unattend>
+"@
+
+            if (-not $isTestMode) {
+                try {
+                    Add-Log -Message "Mounting cloned VHDX offline: $newNameFullPath" -Color Cyan
+                    $vhdDisk = Mount-VHD -Path $newNameFullPath -Passthru
+                    Start-Sleep -Seconds 3
+                    
+                    $driveLetter = $null
+                    $volumes = $vhdDisk | Get-Disk | Get-Partition | Get-Volume
+                    foreach ($vol in $volumes) {
+                        if ($vol.DriveLetter -and (Test-Path "$($vol.DriveLetter):\Windows")) {
+                            $driveLetter = $vol.DriveLetter
+                            break
+                        }
+                    }
+
+                    if (-not $driveLetter) {
+                        throw "Could not locate the Windows directory volume on the mounted VHDX."
+                    }
+
+                    $pantherPath = "$($driveLetter):\Windows\Panther"
+                    if (-not (Test-Path $pantherPath)) {
+                        $null = New-Item -ItemType Directory -Path $pantherPath -Force
+                    }
+
+                    $unattendXML | Out-File -FilePath "$pantherPath\unattend.xml" -Encoding utf8 -Force
+                    Add-Log -Message "Successfully injected unattend.xml into target OS volume ($pantherPath)" -Color Green
+                }
+                catch {
+                    Add-Log -Message "VHDX Injection Failed: $($_.Exception.Message)" -Color Red
+                    throw $_
+                }
+                finally {
+                    Add-Log -Message "Dismounting VHDX..."
+                    Dismount-VHD -Path $newNameFullPath
+                    Start-Sleep -Seconds 2
+                }
+            } else {
+                Add-Log -Message "[TEST MODE] Would mount $newNameFullPath and inject dynamic XML into Windows\Panther" -Color Yellow
+            }
+
             Function Wait-VMReady {
                 param($VMName, $Cred)
-                Add-Log -Message "   Waiting for Guest OS on '$VMName' to become responsive... (May take 2-3 minutes)"
+                Add-Log -Message "    Waiting for Guest OS on '$VMName' to become responsive... (May take 2-3 minutes)"
                 $timeout = (New-TimeSpan -Minutes 4)
                 $watch = [System.Diagnostics.Stopwatch]::StartNew()
                 $vmReady = $false
                 while ($watch.Elapsed -lt $timeout -and -not $vmReady) {
                     $service = Get-VMIntegrationService -VMName $VMName -Name "Guest Service Interface"
                     if ($service.OperationalStatus -ne "OK") {
-                        Add-Log -Message "   Guest Services not 'OK' yet. Waiting..."
+                        Add-Log -Message "    Guest Services not 'OK' yet. Waiting..."
                         Start-Sleep -Seconds 10
                         continue
                     }
                     try {
-                        Add-Log -Message "   Guest Services are 'OK'. Probing for PS Direct..."
+                        Add-Log -Message "    Guest Services are 'OK'. Probing for PS Direct..."
                         $null = Invoke-Command -VMName $VMName -Credential $Cred -ScriptBlock { $true } -ErrorAction Stop
                         $vmReady = $true
-                        Add-Log -Message "   Guest OS is responsive!" -Color Green
+                        Add-Log -Message "    Guest OS is responsive!" -Color Green
                     } catch {
-                        Add-Log -Message "   PS Direct not ready... Retrying."
+                        Add-Log -Message "    PS Direct not ready... Retrying."
                         Start-Sleep -Seconds 10
                     }
                 }
@@ -625,7 +704,7 @@ $btnClone.Add_Click({
             }
 
             if (-not $isTestMode) {
-                Add-Log -Message "   Starting VM $newVMName..."
+                Add-Log -Message "    Starting VM $newVMName..."
                 Start-VM -Name $newVMName
                 Wait-VMReady -VMName $newVMName -Cred $localAdminCred
             } else {
@@ -635,7 +714,7 @@ $btnClone.Add_Click({
 
             $hostnameRestartRequired = $false
             if ($doSetHostname) {
-                Add-Log -Message "   Preparing Guest OS script block (Hostname)..."
+                Add-Log -Message "    Preparing Guest OS script block (Hostname)..."
                 $scriptBlock_Hostname = {
                     param($vmName)
                     $InformationPreference = 'Continue'
@@ -649,19 +728,19 @@ $btnClone.Add_Click({
                 }
 
                 if (-not $isTestMode) {
-                    Add-Log -Message "   Injecting Guest OS script (Hostname & Restart)..."
+                    Add-Log -Message "    Injecting Guest OS script (Hostname & Restart)..."
                     $guestLogStream = New-Object System.Collections.Generic.List[System.Management.Automation.InformationRecord]
                     try {
                         Invoke-Command -VMName $newVMName -Credential $localAdminCred -ScriptBlock $scriptBlock_Hostname -ArgumentList $newVMName -InformationVariable +guestLogStream -ErrorAction Stop
                     } catch {
                         if ($_.Exception.InnerException -is [System.Management.Automation.Remoting.PSRemotingTransportException] -or $_.FullyQualifiedErrorId -like '*PSSessionStateBroken*') {
-                             Add-Log -Message "   [GUEST-H] Restart initiated. Session closed as expected." -Color Green
+                             Add-Log -Message "    [GUEST-H] Restart initiated. Session closed as expected." -Color Green
                         } else {
-                             Add-Log -Message "   [GUEST-H] ERROR: $($_.Exception.Message)" -Color Red
+                             Add-Log -Message "    [GUEST-H] ERROR: $($_.Exception.Message)" -Color Red
                              throw "Guest script (Hostname) failed. See log for details."
                         }
-                    } finally { $guestLogStream | ForEach-Object { Add-Log -Message "   [GUEST-H] $($_.MessageData)" } }
-                    Add-Log -Message "   Hostname configuration sent. Waiting for VM to restart..." -Color Cyan
+                    } finally { $guestLogStream | ForEach-Object { Add-Log -Message "    [GUEST-H] $($_.MessageData)" } }
+                    Add-Log -Message "    Hostname configuration sent. Waiting for VM to restart..." -Color Cyan
                     Start-Sleep -Seconds 15
                     Wait-VMReady -VMName $newVMName -Cred $localAdminCred
                     $hostnameRestartRequired = $true
@@ -674,7 +753,7 @@ $btnClone.Add_Click({
 
             $ipDomainRestartRequired = $false
             if ($doSetIP -or $doDomainJoin) {
-                Add-Log -Message "   Preparing Guest OS script block (IP/Domain)..."
+                Add-Log -Message "    Preparing Guest OS script block (IP/Domain)..."
                 $scriptBlock_IPDomain = {
                     param($doIP, $ip, $subnet, $gw, $dns1, $dns2, $doDomain, $domain, $dCred)
                     $InformationPreference = 'Continue'
@@ -733,7 +812,7 @@ $btnClone.Add_Click({
                 )
 
                 if (-not $isTestMode) {
-                    Add-Log -Message "   Injecting Guest OS script (IP/Domain)..."
+                    Add-Log -Message "    Injecting Guest OS script (IP/Domain)..."
                     $guestLogStream = New-Object System.Collections.Generic.List[System.Management.Automation.InformationRecord]
                     $ipDomainRestartInitiated = $false
                     try {
@@ -741,23 +820,23 @@ $btnClone.Add_Click({
                         if ($doDomainJoin) { $ipDomainRestartInitiated = $true }
                     } catch {
                         if ($doDomainJoin -and ($_.Exception.InnerException -is [System.Management.Automation.Remoting.PSRemotingTransportException] -or $_.FullyQualifiedErrorId -like '*PSSessionStateBroken*')) {
-                            Add-Log -Message "   [GUEST-IP/D] Restart initiated by domain join. Session closed as expected." -Color Green
+                            Add-Log -Message "    [GUEST-IP/D] Restart initiated by domain join. Session closed as expected." -Color Green
                             $ipDomainRestartInitiated = $true
                         } else {
-                            Add-Log -Message "   [GUEST-IP/D] ERROR: $($_.Exception.Message)" -Color Red
+                            Add-Log -Message "    [GUEST-IP/D] ERROR: $($_.Exception.Message)" -Color Red
                             throw "Guest script (IP/Domain) failed. See log for details."
                         }
-                    } finally { $guestLogStream | ForEach-Object { Add-Log -Message "   [GUEST-IP/D] $($_.MessageData)" } }
-                    Add-Log -Message "   IP/Domain configuration complete." -Color Green
+                    } finally { $guestLogStream | ForEach-Object { Add-Log -Message "    [GUEST-IP/D] $($_.MessageData)" } }
+                    Add-Log -Message "    IP/Domain configuration complete." -Color Green
 
-                    Add-Log -Message "   Waiting 5s for final operations..." -Color Cyan
+                    Add-Log -Message "    Waiting 5s for final operations..." -Color Cyan
                     Start-Sleep -Seconds 5
 
                     if ($ipDomainRestartInitiated) {
-                         Add-Log -Message "   Guest OS initiated final restart. Process complete." -Color Green
+                         Add-Log -Message "    Guest OS initiated final restart. Process complete." -Color Green
                     } else {
-                         Add-Log -Message "   Guest OS settings applied. No final restart needed."
-                         Add-Log -Message "   Shutting down VM $newVMName (graceful)."
+                         Add-Log -Message "    Guest OS settings applied. No final restart needed."
+                         Add-Log -Message "    Shutting down VM $newVMName (graceful)."
                          Stop-VM -Name $newVMName -Confirm:$false
                     }
 
@@ -767,13 +846,13 @@ $btnClone.Add_Click({
                 }
             }
             elseif ($hostnameRestartRequired) {
-                 Add-Log -Message "   VM already restarted for hostname. No further Guest OS actions requested." -Color Green
+                 Add-Log -Message "    VM already restarted for hostname. No further Guest OS actions requested." -Color Green
             }
             else {
-                 Add-Log -Message "   No Guest OS configuration requested or needed." -Color Green
+                 Add-Log -Message "    No Guest OS configuration requested or needed." -Color Green
                  if ((Get-VM -Name $newVMName).State -ne 'Off') {
-                    Add-Log -Message "   Shutting down VM $newVMName (graceful)."
-                    Stop-VM -Name $newVMName -Confirm:$false
+                    #Add-Log -Message "    Shutting down VM $newVMName (graceful)."
+                    #Stop-VM -Name $newVMName -Confirm:$false
                  }
             }
         }
